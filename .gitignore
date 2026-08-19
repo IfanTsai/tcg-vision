@@ -1,0 +1,6 @@
+third_party/
+testdata/private/
+models/
+*.onnx
+index*.bin
+/tcgvision
