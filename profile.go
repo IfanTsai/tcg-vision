@@ -30,6 +30,18 @@ type Profile struct {
 	// photos; detection and embedding quality are unaffected well above the
 	// detector's input size. 0 disables the internal downscale.
 	MaxPhotoSide int
+	// FlipRetryBelowSim re-embeds a card rotated by 180° when its best index
+	// match scores below this similarity, and keeps whichever orientation
+	// matches better. Rectification can only pin a card's upright direction to
+	// within 180° (see orientQuad): a sideways card's two candidates are
+	// mirror images, and a card photographed upside down looks upright to the
+	// geometry. Getting it wrong puts the artwork window on the wrong part of
+	// the card, which scores middling against some unrelated card rather than
+	// failing outright — measured on real photos, a sideways card lands around
+	// 0.75 with the wrong orientation and 0.90 with the right one. Gating the
+	// retry on a weak first match keeps the common case (an upright card, one
+	// embedding) at its original cost. 0 disables the retry.
+	FlipRetryBelowSim float32
 	// FlatAspectTol enables the whole-image fallback in Recognize: when the
 	// detector finds no cards (it is trained on photos of physical cards and
 	// scores flat scans and official renders near zero) and the image's
@@ -44,18 +56,19 @@ type Profile struct {
 // window of both standard and pendulum frames.
 func YuGiOh() Profile {
 	return Profile{
-		DetectSize:    640,
-		ConfThreshold: 0.25,
-		IoUThreshold:  0.45,
-		MinConf:       0.5,
-		MinAreaFrac:   0.02,
-		CardW:         472,
-		CardH:         688,
-		ArtX:          0.15,
-		ArtY:          0.22,
-		ArtW:          0.70,
-		ArtH:          0.46,
-		MaxPhotoSide:  1600,
-		FlatAspectTol: 0.05,
+		DetectSize:        640,
+		ConfThreshold:     0.25,
+		IoUThreshold:      0.45,
+		MinConf:           0.5,
+		MinAreaFrac:       0.02,
+		CardW:             472,
+		CardH:             688,
+		ArtX:              0.15,
+		ArtY:              0.22,
+		ArtW:              0.70,
+		ArtH:              0.46,
+		MaxPhotoSide:      1600,
+		FlipRetryBelowSim: 0.82,
+		FlatAspectTol:     0.05,
 	}
 }

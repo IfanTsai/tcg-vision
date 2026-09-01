@@ -171,7 +171,7 @@ func (p *Pipeline) EmbedCards(img image.Image, boxes []Box) ([][]float32, error)
 	prof := p.profile
 	batch := make([]float32, 0, len(boxes)*3*embedInputSize*embedInputSize)
 	for _, b := range boxes {
-		card, err := warpCard(rgb, b.Poly, prof.CardW, prof.CardH)
+		card, err := warpCard(rgb, orientQuad(b.Poly), prof.CardW, prof.CardH)
 		if err != nil {
 			return nil, fmt.Errorf("rectify card: %w", err)
 		}
@@ -301,12 +301,17 @@ func (p *Pipeline) recognizeRGB(rgb *rgbImage, idx *Index, topK int) ([]Detectio
 	}
 
 	prof := p.profile
+	quads := make([][4][2]float32, len(boxes))
 	batch := make([]float32, 0, len(boxes)*3*embedInputSize*embedInputSize)
-	for _, b := range boxes {
-		card, err := warpCard(rgb, b.Poly, prof.CardW, prof.CardH)
+
+	for i, b := range boxes {
+		quads[i] = orientQuad(b.Poly)
+
+		card, err := warpCard(rgb, quads[i], prof.CardW, prof.CardH)
 		if err != nil {
 			return nil, fmt.Errorf("rectify card: %w", err)
 		}
+
 		batch = embedInput(batch, artWindow(card, prof))
 	}
 
@@ -320,7 +325,71 @@ func (p *Pipeline) recognizeRGB(rgb *rgbImage, idx *Index, topK int) ([]Detectio
 		dets[i] = Detection{Box: b, Matches: idx.Search(vecs[i], topK)}
 	}
 
+	if err := p.retryFlipped(rgb, quads, dets, idx, topK); err != nil {
+		return nil, err
+	}
+
 	return dets, nil
+}
+
+// retryFlipped re-embeds the 180° twin of every card whose match came back
+// weak and keeps the better of the two. Rectification pins a card's upright
+// direction only to within 180° (see orientQuad and Profile.FlipRetryBelowSim);
+// a card rectified upside down scores middling against some unrelated card
+// instead of failing outright, so a weak match is the signal to try the twin.
+// Cards that already matched well — the common case — cost nothing extra.
+func (p *Pipeline) retryFlipped(
+	rgb *rgbImage, quads [][4][2]float32, dets []Detection, idx *Index, topK int,
+) error {
+	prof := p.profile
+	if prof.FlipRetryBelowSim <= 0 {
+		return nil
+	}
+
+	var weak []int
+
+	for i := range dets {
+		if topSim(dets[i].Matches) < prof.FlipRetryBelowSim {
+			weak = append(weak, i)
+		}
+	}
+
+	if len(weak) == 0 {
+		return nil
+	}
+
+	batch := make([]float32, 0, len(weak)*3*embedInputSize*embedInputSize)
+
+	for _, i := range weak {
+		card, err := warpCard(rgb, flipQuad(quads[i]), prof.CardW, prof.CardH)
+		if err != nil {
+			return fmt.Errorf("rectify flipped card: %w", err)
+		}
+
+		batch = embedInput(batch, artWindow(card, prof))
+	}
+
+	vecs, err := p.runEmbedder(batch, len(weak))
+	if err != nil {
+		return err
+	}
+
+	for j, i := range weak {
+		if matches := idx.Search(vecs[j], topK); topSim(matches) > topSim(dets[i].Matches) {
+			dets[i].Matches = matches
+		}
+	}
+
+	return nil
+}
+
+// topSim is the best similarity in a match list (0 when empty).
+func topSim(matches []Match) float32 {
+	if len(matches) == 0 {
+		return 0
+	}
+
+	return matches[0].Sim
 }
 
 // recognizeFlat is the no-detection fallback of Recognize: flat scans and

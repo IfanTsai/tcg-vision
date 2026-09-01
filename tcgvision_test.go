@@ -18,12 +18,14 @@ func TestF16Roundtrip(t *testing.T) {
 	}
 }
 
-func TestOrderQuad(t *testing.T) {
+func TestOrientQuadLegacyOrdering(t *testing.T) {
+	// The counter-clockwise quad the old sum/difference ordering was tested
+	// with: orientQuad must keep producing the identical result for it.
 	in := [4][2]float32{{100, 10}, {10, 12}, {12, 200}, {102, 198}}
-	got := orderQuad(in)
+	got := orientQuad(in)
 	want := [4][2]float32{{10, 12}, {100, 10}, {102, 198}, {12, 200}}
 	if got != want {
-		t.Errorf("orderQuad = %v, want %v", got, want)
+		t.Errorf("orientQuad = %v, want %v", got, want)
 	}
 }
 
@@ -152,7 +154,7 @@ func TestDecodeOBBAndNMS(t *testing.T) {
 	}
 	// axis-aligned 100x150 box centered at (320,320)
 	want := [4][2]float32{{270, 245}, {370, 245}, {370, 395}, {270, 395}}
-	got := orderQuad(boxes[0].Poly)
+	got := orientQuad(boxes[0].Poly)
 	for i := range want {
 		if math.Abs(float64(got[i][0]-want[i][0])) > 1e-3 || math.Abs(float64(got[i][1]-want[i][1])) > 1e-3 {
 			t.Fatalf("poly[%d] = %v, want %v", i, got[i], want[i])

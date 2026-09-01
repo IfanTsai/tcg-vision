@@ -25,6 +25,12 @@ profile.
 1. **Detect** — a YOLO oriented-bounding-box model finds cards in the photo
    (any rotation, multiple cards per photo).
 2. **Rectify** — each quad is perspective-warped to an upright canonical card.
+   Corners are ordered by edge length rather than by position, so a card lying
+   sideways in the frame (a photo of an open binder page, say) is rectified
+   across its short axis like any other. Geometry pins the upright direction
+   only to within 180°, so a card whose first match comes back weak is
+   embedded a second time rotated 180° and the better match wins
+   (`Profile.FlipRetryBelowSim`); upright cards cost one embedding as before.
 3. **Embed** — only the artwork window is embedded with a DINOv2-small
    backbone (CLS + mean-patch concat, 768d, L2-normalized). Card frames and
    foil textures look alike across cards; artwork does not — embedding only

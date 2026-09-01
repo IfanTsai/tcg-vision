@@ -125,14 +125,10 @@ func decodeOBB(raw []float32, n int, scale float32, padX, padY int, p Profile) [
 
 // polyArea returns the area of a quad via the shoelace formula.
 func polyArea(poly [4][2]float32) float32 {
-	var sum float32
-	for i := range 4 {
-		j := (i + 1) % 4
-		sum += poly[i][0]*poly[j][1] - poly[j][0]*poly[i][1]
-	}
-	if sum < 0 {
-		sum = -sum
+	area := signedArea(poly)
+	if area < 0 {
+		return -area
 	}
 
-	return sum / 2
+	return area
 }
