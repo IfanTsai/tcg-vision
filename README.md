@@ -16,9 +16,10 @@ official renders — which the photo-trained detector scores near zero — are
 handled by a whole-image fallback when the image itself has a card-like
 aspect ratio (`Profile.FlatAspectTol`, reported as `Detection.Flat`).
 
-The pipeline is game-agnostic; game specifics (detector model, card aspect
-ratio, artwork window) live in a `Profile` — Yu-Gi-Oh! is the first built-in
-profile.
+The pipeline is game-agnostic; game specifics (card aspect ratio, artwork
+window, detection thresholds) live in a `Profile`. Built-in profiles:
+`YuGiOh()` and `Gundam()` (GUNDAM CARD GAME). One process can serve several
+games from a single copy of the models (see [Several games](#several-games)).
 
 ## How it works
 
@@ -68,6 +69,13 @@ Real output for a photo of a sleeved prismatic card (`recognize -k 3`):
 ]
 ```
 
+GUNDAM CARD GAME (`Gundam()` profile), on ~650 seller photos from auction
+listings (single and multi-card, sleeved, foil, on playmats) against ~4,000
+official renders: 69% photo-level top-1 and 82% when a card was found, with
+no confident mistakes at the 0.82 / 0.03 thresholds. The weak spot is
+detection: the default detector was trained on Yu-Gi-Oh! photos and finds no
+card in ~16% of these photos.
+
 Keys are whatever you indexed — here, reference image paths whose names
 encode the card and printing. What similarity counts as "confident" is
 yours to calibrate per domain: in our data, photo-vs-photo hits land at
@@ -110,6 +118,9 @@ make cli    # builds ./tcgvision (or: go install github.com/IfanTsai/tcg-vision/
 ./tcgvision index -ort third_party/onnxruntime-*/lib/libonnxruntime.so \
   -embedder models/embedder.onnx -images ./reference-images -out index.bin
 
+# other games: pass the same -profile to index and recognize (yugioh|gundam, default yugioh)
+./tcgvision index -profile gundam ...
+
 # recognize cards in a photo
 ./tcgvision recognize -ort third_party/onnxruntime-*/lib/libonnxruntime.so \
   -detector models/detector.onnx -embedder models/embedder.onnx \
@@ -146,6 +157,25 @@ vec, err := pipe.EmbedReference(cardImage) // flat render or printing photo
 idx.Add("cards/89631139.jpg", vec)
 idx.Save("index.bin")
 ```
+
+### Several games
+
+The models are game-agnostic and large (~0.5 GB in memory); the profile is
+not. `WithProfile` derives a pipeline for another game that shares the
+already-loaded models — nothing is loaded twice:
+
+```go
+pipe, err := tcgvision.New(cfg)                  // loads the models once (Yu-Gi-Oh! profile)
+gundam := pipe.WithProfile(tcgvision.Gundam())   // same models, Gundam card aspect and artwork window
+
+dets, err := gundam.Recognize(photo, gundamIdx, 5)
+```
+
+Keep **one index per game**: photos and references are embedded through the
+game's artwork window, so vectors are only comparable within one profile.
+Index each game's references with that game's pipeline. Inference stays
+serialized across pipelines that share models, and `Close` on any of them
+releases the models for all.
 
 ## Limitations
 

@@ -10,6 +10,7 @@
 package tcgvision
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	"sync"
@@ -44,19 +45,37 @@ type Config struct {
 	Profile Profile
 }
 
-// Pipeline runs detection, rectification and embedding. Inference calls are
-// serialized internally so a Pipeline has a bounded memory footprint.
+// Pipeline runs detection, rectification and embedding for one game
+// Profile. Pipelines derived with WithProfile share the loaded models, so one
+// process can serve several games for the memory cost of one. Inference calls
+// are serialized across all pipelines sharing the models, which keeps the
+// memory footprint bounded.
 type Pipeline struct {
+	models  *models
+	profile Profile
+}
+
+// models holds the loaded model sessions shared by a Pipeline and every
+// pipeline derived from it with WithProfile.
+type models struct {
 	mu       sync.Mutex
 	detector *ort.DynamicAdvancedSession
 	embedder *ort.DynamicAdvancedSession
-	profile  Profile
+	closed   bool
 }
 
 var (
 	ortInitOnce sync.Once
 	ortInitErr  error
 )
+
+// ErrClosed is returned by inference calls on a pipeline whose models were
+// released with Close (by it or by any pipeline sharing its models).
+var ErrClosed = errors.New("tcgvision: pipeline closed")
+
+// ErrNoDetector is returned by detection calls on a pipeline created without
+// Config.DetectorPath (an embedding-only pipeline, e.g. for indexing).
+var ErrNoDetector = errors.New("tcgvision: pipeline has no detector")
 
 // Detection is one recognized card: where it is and what it looks like.
 type Detection struct {
@@ -104,12 +123,26 @@ func New(cfg Config) (*Pipeline, error) {
 
 	embedder, err := ort.NewDynamicAdvancedSession(cfg.EmbedderPath, []string{"pixel_values"}, []string{"emb"}, opts)
 	if err != nil {
-		_ = detector.Destroy()
+		if detector != nil {
+			_ = detector.Destroy()
+		}
 
 		return nil, fmt.Errorf("load embedder %s: %w", cfg.EmbedderPath, err)
 	}
 
-	return &Pipeline{detector: detector, embedder: embedder, profile: cfg.Profile}, nil
+	return &Pipeline{models: &models{detector: detector, embedder: embedder}, profile: cfg.Profile}, nil
+}
+
+// WithProfile returns a pipeline for another game that shares p's loaded
+// models: no model is loaded again, only the game-specific parameters
+// (card aspect, artwork window, detection thresholds) differ. The two
+// pipelines are independent otherwise, except that Close on either releases
+// the shared models for both.
+//
+// Embeddings are only comparable within one profile: index each game's
+// references with that game's pipeline and keep one index per game.
+func (p *Pipeline) WithProfile(prof Profile) *Pipeline {
+	return &Pipeline{models: p.models, profile: prof}
 }
 
 // Profile returns the pipeline's game profile.
@@ -195,19 +228,23 @@ func (p *Pipeline) EmbedReference(img image.Image) ([]float32, error) {
 	return vecs[0], nil
 }
 
-// Close releases the model sessions.
+// Close releases the model sessions, shared with every pipeline derived via
+// WithProfile: afterwards inference on any of them returns ErrClosed.
+// Closing again is a no-op.
 func (p *Pipeline) Close() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	m := p.models
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	if p.detector != nil {
-		_ = p.detector.Destroy()
-		p.detector = nil
+	if m.detector != nil {
+		_ = m.detector.Destroy()
+		m.detector = nil
 	}
-	if p.embedder != nil {
-		_ = p.embedder.Destroy()
-		p.embedder = nil
+	if m.embedder != nil {
+		_ = m.embedder.Destroy()
+		m.embedder = nil
 	}
+	m.closed = true
 
 	return nil
 }
@@ -222,10 +259,14 @@ func (p *Pipeline) detectRGB(rgb *rgbImage) ([]Box, error) {
 	}
 	defer func() { _ = input.Destroy() }()
 
-	p.mu.Lock()
 	outputs := []ort.Value{nil}
-	err = p.detector.Run([]ort.Value{input}, outputs)
-	p.mu.Unlock()
+	err = p.models.run(func(m *models) error {
+		if m.detector == nil {
+			return ErrNoDetector
+		}
+
+		return m.detector.Run([]ort.Value{input}, outputs)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("run detector: %w", err)
 	}
@@ -262,10 +303,10 @@ func (p *Pipeline) runEmbedder(batch []float32, count int) ([][]float32, error) 
 	}
 	defer func() { _ = input.Destroy() }()
 
-	p.mu.Lock()
 	outputs := []ort.Value{nil}
-	err = p.embedder.Run([]ort.Value{input}, outputs)
-	p.mu.Unlock()
+	err = p.models.run(func(m *models) error {
+		return m.embedder.Run([]ort.Value{input}, outputs)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("run embedder: %w", err)
 	}
@@ -381,6 +422,19 @@ func (p *Pipeline) retryFlipped(
 	}
 
 	return nil
+}
+
+// run executes one inference under the shared lock, failing with ErrClosed
+// once the models were released.
+func (m *models) run(fn func(m *models) error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.closed {
+		return ErrClosed
+	}
+
+	return fn(m)
 }
 
 // topSim is the best similarity in a match list (0 when empty).

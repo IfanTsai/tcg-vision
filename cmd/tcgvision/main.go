@@ -21,6 +21,15 @@ import (
 	tcgvision "github.com/IfanTsai/tcg-vision"
 )
 
+// profiles are the built-in game profiles selectable with -profile.
+var profiles = map[string]func() tcgvision.Profile{
+	"yugioh": tcgvision.YuGiOh,
+	"gundam": tcgvision.Gundam,
+}
+
+// profileNames lists the -profile choices for flag help.
+const profileNames = "yugioh|gundam"
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: tcgvision <index|recognize> [flags]")
@@ -39,6 +48,16 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+// profileByName resolves a -profile flag value.
+func profileByName(name string) (tcgvision.Profile, error) {
+	newProfile, ok := profiles[name]
+	if !ok {
+		return tcgvision.Profile{}, fmt.Errorf("unknown profile %q (want %s)", name, profileNames)
+	}
+
+	return newProfile(), nil
 }
 
 func loadImage(path string) (image.Image, error) {
@@ -63,9 +82,17 @@ func runIndex(args []string) error {
 	out := fs2.String("out", "index.bin", "output index file")
 	threads := fs2.Int("threads", runtime.NumCPU(), "intra-op threads")
 	batch := fs2.Int("batch", 64, "embedding batch size")
+	profileName := fs2.String("profile", "yugioh", "game profile: "+profileNames)
 	_ = fs2.Parse(args)
 
-	pipe, err := tcgvision.New(tcgvision.Config{ORTLibPath: *ortLib, EmbedderPath: *embedder, Threads: *threads})
+	prof, err := profileByName(*profileName)
+	if err != nil {
+		return err
+	}
+
+	pipe, err := tcgvision.New(tcgvision.Config{
+		ORTLibPath: *ortLib, EmbedderPath: *embedder, Threads: *threads, Profile: prof,
+	})
 	if err != nil {
 		return err
 	}
@@ -168,10 +195,16 @@ func runRecognize(args []string) error {
 	photo := fs2.String("photo", "", "photo to recognize")
 	topK := fs2.Int("k", 5, "matches per card")
 	threads := fs2.Int("threads", 2, "intra-op threads")
+	profileName := fs2.String("profile", "yugioh", "game profile (must match the index): "+profileNames)
 	_ = fs2.Parse(args)
 
+	prof, err := profileByName(*profileName)
+	if err != nil {
+		return err
+	}
+
 	pipe, err := tcgvision.New(tcgvision.Config{
-		ORTLibPath: *ortLib, DetectorPath: *detector, EmbedderPath: *embedder, Threads: *threads,
+		ORTLibPath: *ortLib, DetectorPath: *detector, EmbedderPath: *embedder, Threads: *threads, Profile: prof,
 	})
 	if err != nil {
 		return err

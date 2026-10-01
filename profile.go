@@ -72,3 +72,24 @@ func YuGiOh() Profile {
 		FlatAspectTol:     0.05,
 	}
 }
+
+// Gundam returns the profile for GUNDAM CARD GAME cards (63x88mm). The
+// artwork window is the central part of the illustration shared by unit,
+// pilot, command, base and resource frames: clear of the card-type bar down
+// the left edge and the name and effect box below, and mostly clear of the
+// level/cost badge in the top-left corner. Chosen on ~650 real photos against
+// the official renders: windows reaching the card edges score lower, as the
+// frame and the SAMPLE watermark on the renders weigh more there.
+// Detection parameters are the Yu-Gi-Oh! ones: lowering them on Gundam photos
+// mostly adds misaligned boxes.
+func Gundam() Profile {
+	prof := YuGiOh()
+	prof.CardW = 480
+	prof.CardH = 670
+	prof.ArtX = 0.14
+	prof.ArtY = 0.12
+	prof.ArtW = 0.74
+	prof.ArtH = 0.42
+
+	return prof
+}
