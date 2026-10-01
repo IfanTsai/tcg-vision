@@ -191,3 +191,34 @@ func TestFlatAspectOK(t *testing.T) {
 		})
 	}
 }
+
+func TestCenterCardCrop(t *testing.T) {
+	prof := YuGiOh()
+	cases := []struct {
+		name string
+		w, h int
+	}{
+		{"4:3 landscape", 1600, 1200},
+		{"4:3 portrait", 1200, 1600},
+		{"16:9 portrait", 900, 1600},
+		{"square", 1000, 1000},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			x0, y0, x1, y1 := centerCardCrop(c.w, c.h, prof)
+
+			if x0 < 0 || y0 < 0 || x1 > c.w || y1 > c.h {
+				t.Fatalf("crop (%d,%d)-(%d,%d) leaves the %dx%d image", x0, y0, x1, y1, c.w, c.h)
+			}
+			if x0 != c.w-x1 && x0 != c.w-x1-1 || y0 != c.h-y1 && y0 != c.h-y1-1 {
+				t.Errorf("crop (%d,%d)-(%d,%d) is not centered in %dx%d", x0, y0, x1, y1, c.w, c.h)
+			}
+			if x1-x0 != c.w && y1-y0 != c.h {
+				t.Errorf("crop (%d,%d)-(%d,%d) touches neither side pair of %dx%d", x0, y0, x1, y1, c.w, c.h)
+			}
+			if !flatAspectOK(x1-x0, y1-y0, prof) {
+				t.Errorf("crop %dx%d is not card-shaped", x1-x0, y1-y0)
+			}
+		})
+	}
+}

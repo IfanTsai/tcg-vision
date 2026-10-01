@@ -14,7 +14,10 @@ photo ──▶ oriented-box detector ──▶ perspective rectification per ca
 Works on sleeved, foil-heavy, rotated cards in real photos. Flat scans and
 official renders — which the photo-trained detector scores near zero — are
 handled by a whole-image fallback when the image itself has a card-like
-aspect ratio (`Profile.FlatAspectTol`, reported as `Detection.Flat`).
+aspect ratio (`Profile.FlatAspectTol`, reported as `Detection.Flat`). Other
+photos where no card is found are retried on their largest centered
+card-shaped crop (`Profile.CenterCrop`), since a photo of one card is usually
+framed around it.
 
 The pipeline is game-agnostic; game specifics (card aspect ratio, artwork
 window, detection thresholds) live in a `Profile`. Built-in profiles:
@@ -71,10 +74,12 @@ Real output for a photo of a sleeved prismatic card (`recognize -k 3`):
 
 GUNDAM CARD GAME (`Gundam()` profile), on ~650 seller photos from auction
 listings (single and multi-card, sleeved, foil, on playmats) against ~4,000
-official renders: 69% photo-level top-1 and 82% when a card was found, with
-no confident mistakes at the 0.82 / 0.03 thresholds. The weak spot is
-detection: the default detector was trained on Yu-Gi-Oh! photos and finds no
-card in ~16% of these photos.
+official renders: 81% photo-level top-1. The default detector was trained on
+Yu-Gi-Oh! photos and finds no card in ~16% of these photos; the center-crop
+fallback recovers most of them (69% top-1 without it). At the 0.82 / 0.03
+thresholds there are no confident mistakes on detected cards; fallback
+detections (`Flat`) are guesses and want a wider margin — 0.04 clears the one
+confident mistake there, a card from a different game.
 
 Keys are whatever you indexed — here, reference image paths whose names
 encode the card and printing. What similarity counts as "confident" is

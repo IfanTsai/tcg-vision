@@ -3,6 +3,8 @@ package tcgvision
 import (
 	"encoding/json"
 	"image"
+	"image/color"
+	"image/draw"
 	_ "image/jpeg"
 	"math"
 	"os"
@@ -165,6 +167,72 @@ func TestRecognizeFlatFallback(t *testing.T) {
 	}
 	if top.Sim < 0.9 {
 		t.Errorf("top match sim = %.4f, want >= 0.9", top.Sim)
+	}
+}
+
+// TestRecognizeCenterCropFallback covers Profile.CenterCrop: the flat render
+// from TestRecognizeFlatFallback, centered on a wide canvas that is not
+// card-shaped, must still be recognized, with Poly in the canvas's pixel space.
+func TestRecognizeCenterCropFallback(t *testing.T) {
+	loadPrivateGolden(t) // skip when private assets are absent
+
+	pipe, err := New(Config{
+		ORTLibPath:   ortLibPath(t),
+		DetectorPath: "testdata/private/models/detector.onnx",
+		EmbedderPath: "testdata/private/models/embedder.onnx",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = pipe.Close() }()
+
+	idx, err := LoadIndex("testdata/private/index_art.bin")
+	if err != nil {
+		t.Fatalf("LoadIndex: %v", err)
+	}
+
+	f, err := os.Open("testdata/private/photos/flat-superpoly-losp.jpg")
+	if err != nil {
+		t.Fatalf("open flat render: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	card, _, err := image.Decode(f)
+	if err != nil {
+		t.Fatalf("decode flat render: %v", err)
+	}
+
+	cb := card.Bounds()
+	pad := cb.Dx() / 2
+	canvas := image.NewRGBA(image.Rect(0, 0, cb.Dx()+2*pad, cb.Dy()))
+	draw.Draw(canvas, canvas.Bounds(), image.NewUniform(color.Gray{Y: 128}), image.Point{}, draw.Src)
+	draw.Draw(canvas, cb.Add(image.Pt(pad, 0)).Sub(cb.Min), card, cb.Min, draw.Src)
+
+	dets, err := pipe.Recognize(canvas, idx, 5)
+	if err != nil {
+		t.Fatalf("Recognize: %v", err)
+	}
+	if len(dets) != 1 || len(dets[0].Matches) == 0 {
+		t.Fatalf("want exactly one detection with matches, got %+v", dets)
+	}
+
+	top := dets[0].Matches[0]
+	if want := "SuperPolymerization-LOSP-JP-PScR"; !strings.Contains(top.Key, want) {
+		t.Errorf("top match key = %s (sim %.4f), want it to contain %s", top.Key, top.Sim, want)
+	}
+	for _, pt := range dets[0].Poly {
+		if pt[0] < float32(pad)*0.8 || pt[0] > float32(pad+cb.Dx())*1.05 {
+			t.Errorf("poly %v strays from the card at x %d..%d", dets[0].Poly, pad, pad+cb.Dx())
+			break
+		}
+	}
+
+	pipe.profile.CenterCrop = false
+	dets, err = pipe.Recognize(canvas, idx, 5)
+	if err != nil {
+		t.Fatalf("Recognize without CenterCrop: %v", err)
+	}
+	if len(dets) != 0 && dets[0].Flat {
+		t.Errorf("CenterCrop disabled: want no flat detection, got %+v", dets)
 	}
 }
 

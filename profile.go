@@ -49,6 +49,14 @@ type Profile struct {
 	// the whole image is embedded as one upright card. Keep it tight enough
 	// to exclude common photo ratios (4:3, 16:9); 0 disables the fallback.
 	FlatAspectTol float32
+	// CenterCrop extends that fallback to images of any shape: when nothing
+	// is detected and the image is not card-shaped, the largest centered
+	// card-aspect crop is recognized instead (detection runs again on the
+	// crop, where the card is larger, and the crop is embedded whole when it
+	// still finds nothing). Photos of a single card are usually framed around
+	// it: on ~100 real Gundam photos the detector missed, the top match was
+	// right on 74% with no confident mismatch. Needs FlatAspectTol > 0.
+	CenterCrop bool
 }
 
 // YuGiOh returns the profile for Yu-Gi-Oh! cards (59x86mm, standard frame
@@ -70,6 +78,7 @@ func YuGiOh() Profile {
 		MaxPhotoSide:      1600,
 		FlipRetryBelowSim: 0.82,
 		FlatAspectTol:     0.05,
+		CenterCrop:        true,
 	}
 }
 

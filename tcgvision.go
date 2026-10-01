@@ -80,10 +80,11 @@ var ErrNoDetector = errors.New("tcgvision: pipeline has no detector")
 // Detection is one recognized card: where it is and what it looks like.
 type Detection struct {
 	Box
-	// Flat marks the whole-image fallback (see Profile.FlatAspectTol): no card
-	// was detected but the image itself has a card-like aspect ratio, so it
-	// was embedded as one upright card. Poly covers the full image and Conf is
-	// 0 (there is no detector confidence to report).
+	// Flat marks the no-detection fallback (see Profile.FlatAspectTol and
+	// Profile.CenterCrop): no card was detected, so the whole card-shaped
+	// image, or its centered card-aspect crop, was embedded as one upright
+	// card. Poly covers that region and Conf is 0 (there is no detector
+	// confidence to report).
 	Flat    bool
 	Matches []Match
 }
@@ -155,9 +156,9 @@ func (p *Pipeline) Detect(img image.Image) ([]Box, error) {
 }
 
 // Recognize runs the full pipeline on a photo: detect cards, embed each one,
-// and return the topK index matches per card. When nothing is detected and
-// the image itself has a card-like aspect ratio, the whole image is embedded
-// as one upright card instead (Detection.Flat).
+// and return the topK index matches per card. When nothing is detected, the
+// whole image (when card-shaped) or its centered card-aspect crop is
+// recognized instead (Detection.Flat; see Profile.CenterCrop).
 //
 // Pass the photo at full resolution: photos larger than Profile.MaxPhotoSide
 // are downscaled internally, and coordinates in the results are always in the
@@ -338,7 +339,7 @@ func (p *Pipeline) recognizeRGB(rgb *rgbImage, idx *Index, topK int) ([]Detectio
 		return nil, err
 	}
 	if len(boxes) == 0 {
-		return p.recognizeFlat(rgb, idx, topK)
+		return p.recognizeUndetected(rgb, idx, topK)
 	}
 
 	prof := p.profile
@@ -446,17 +447,45 @@ func topSim(matches []Match) float32 {
 	return matches[0].Sim
 }
 
-// recognizeFlat is the no-detection fallback of Recognize: flat scans and
-// official renders score near zero on the photo-trained detector, so a
-// card-aspect image is embedded whole as one upright card. Returns nil when
-// the fallback is disabled or the aspect ratio does not fit.
-func (p *Pipeline) recognizeFlat(rgb *rgbImage, idx *Index, topK int) ([]Detection, error) {
+// recognizeUndetected is the no-detection fallback of Recognize: a
+// card-shaped image is embedded whole (recognizeFlat); any other image is
+// recognized again on its largest centered card-aspect crop when the profile
+// enables CenterCrop. The crop is card-shaped, so it recurses at most once.
+func (p *Pipeline) recognizeUndetected(rgb *rgbImage, idx *Index, topK int) ([]Detection, error) {
 	prof := p.profile
-	if !flatAspectOK(rgb.w, rgb.h, prof) {
+	if flatAspectOK(rgb.w, rgb.h, prof) {
+		return p.recognizeFlat(rgb, idx, topK)
+	}
+	if !prof.CenterCrop {
 		return nil, nil
 	}
 
-	vecs, err := p.runEmbedder(embedInput(nil, artWindow(rgb, prof)), 1)
+	x0, y0, x1, y1 := centerCardCrop(rgb.w, rgb.h, prof)
+	crop := rgb.crop(x0, y0, x1, y1)
+	if !flatAspectOK(crop.w, crop.h, prof) {
+		return nil, nil // a few pixels wide: rounding broke the aspect ratio
+	}
+
+	dets, err := p.recognizeRGB(crop, idx, topK)
+	if err != nil {
+		return nil, err
+	}
+
+	for d := range dets {
+		for i := range dets[d].Poly {
+			dets[d].Poly[i][0] += float32(x0)
+			dets[d].Poly[i][1] += float32(y0)
+		}
+	}
+
+	return dets, nil
+}
+
+// recognizeFlat embeds a card-shaped image whole as one upright card: flat
+// scans and official renders score near zero on the photo-trained detector.
+// The caller checks the aspect ratio (flatAspectOK).
+func (p *Pipeline) recognizeFlat(rgb *rgbImage, idx *Index, topK int) ([]Detection, error) {
+	vecs, err := p.runEmbedder(embedInput(nil, artWindow(rgb, p.profile)), 1)
 	if err != nil {
 		return nil, err
 	}
@@ -524,4 +553,16 @@ func flatAspectOK(w, h int, prof Profile) bool {
 	want := float32(prof.CardH) / float32(prof.CardW)
 
 	return aspect >= want*(1-prof.FlatAspectTol) && aspect <= want*(1+prof.FlatAspectTol)
+}
+
+// centerCardCrop returns the largest centered rectangle with the profile's
+// card aspect ratio that fits in a w x h image.
+func centerCardCrop(w, h int, prof Profile) (x0, y0, x1, y1 int) {
+	cw, ch := w, w*prof.CardH/prof.CardW
+	if ch > h {
+		cw, ch = h*prof.CardW/prof.CardH, h
+	}
+	x0, y0 = (w-cw)/2, (h-ch)/2
+
+	return x0, y0, x0 + cw, y0 + ch
 }
