@@ -132,6 +132,25 @@ func (ix *Index) Add(key string, vec []float32) error {
 	return nil
 }
 
+// Rename moves the embedding stored under oldKey to newKey without touching
+// the vector. It fails when oldKey is absent or newKey is already present.
+func (ix *Index) Rename(oldKey, newKey string) error {
+	pos, ok := ix.keyPos[oldKey]
+	if !ok {
+		return fmt.Errorf("key %q not found", oldKey)
+	}
+
+	if _, exists := ix.keyPos[newKey]; exists {
+		return fmt.Errorf("key %q already exists", newKey)
+	}
+
+	delete(ix.keyPos, oldKey)
+	ix.keyPos[newKey] = pos
+	ix.keys[pos] = newKey
+
+	return nil
+}
+
 // Search returns the topK most similar keys by dot product (== cosine for
 // normalized vectors), descending.
 func (ix *Index) Search(vec []float32, topK int) []Match {

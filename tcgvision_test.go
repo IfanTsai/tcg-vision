@@ -133,6 +133,56 @@ func TestIndexSaveLoadSearch(t *testing.T) {
 	}
 }
 
+func TestIndexRename(t *testing.T) {
+	idx := NewIndex(2)
+	for k, v := range map[string][]float32{"a": {1, 0}, "b": {0, 1}} {
+		if err := idx.Add(k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := idx.Rename("a", "x/a"); err != nil {
+		t.Fatal(err)
+	}
+
+	if idx.Has("a") || !idx.Has("x/a") || idx.Len() != 2 {
+		t.Fatalf("after rename: has a=%v, has x/a=%v, len=%d", idx.Has("a"), idx.Has("x/a"), idx.Len())
+	}
+
+	// the vector must follow the key
+	if got := idx.Search([]float32{1, 0}, 1); len(got) != 1 || got[0].Key != "x/a" {
+		t.Fatalf("search after rename = %+v", got)
+	}
+
+	// Add on the new key replaces in place rather than appending
+	if err := idx.Add("x/a", []float32{0, 1}); err != nil || idx.Len() != 2 {
+		t.Fatalf("add on renamed key: err=%v len=%d", err, idx.Len())
+	}
+
+	if err := idx.Rename("missing", "y"); err == nil {
+		t.Error("renaming an absent key must fail")
+	}
+
+	if err := idx.Rename("b", "x/a"); err == nil {
+		t.Error("renaming onto an existing key must fail")
+	}
+
+	// the rename survives a save/load round trip
+	path := filepath.Join(t.TempDir(), "idx.bin")
+	if err := idx.Save(path); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadIndex(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !loaded.Has("x/a") || loaded.Has("a") {
+		t.Errorf("loaded keys = %v", loaded.Keys())
+	}
+}
+
 func TestDecodeOBBAndNMS(t *testing.T) {
 	// two overlapping boxes (one lower-conf duplicate) + one below threshold
 	n := 3
